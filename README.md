@@ -3,7 +3,7 @@
 DataChat turns plain-English questions into SQL, runs them safely, and answers with a chart, a short
 insight and the exact query behind it. Upload a CSV or Excel file, or try one of three sample datasets.
 
-**Live demo:** `https://<your-app>.onrender.com` (the free instance sleeps when idle; the first visit takes about a minute)
+**Live demo:** https://datachat-g5e6.onrender.com (free hosting: the first visit after a quiet spell takes about a minute to wake up)
 
 ```
 "Which city's sales dropped most last quarter?"
@@ -78,7 +78,9 @@ Results go to `eval/results/latest.json` (shown on the app's **Benchmark** page)
 and a per-question file for error analysis. The runner works with any OpenAI-compatible endpoint
 (`--base-url`), so a local model served by Ollama can be measured on exactly the same questions.
 
-**Results:** see [`eval/results/report.md`](eval/results/report.md) after the first run.
+**Results (gpt-oss-120b):** 95.0% execution accuracy on 60 questions: easy 95.2%, medium 100%, hard 86.7%.
+An error analysis of an earlier 90% run showed the model grouping by non-unique names; adding a general
+"group by the id, show the name" rule raised it to 95%. Full report: [eval/results/report.md](eval/results/report.md).
 
 ## Run locally
 
