@@ -1,0 +1,13 @@
+# Render Blueprint: New > Blueprint > pick this repo. Or create a Web Service by hand (see README).
+services:
+  - type: web
+    name: datachat
+    runtime: docker
+    plan: free
+    region: singapore
+    healthCheckPath: /api/health
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false

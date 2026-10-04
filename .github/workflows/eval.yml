@@ -1,0 +1,33 @@
+name: Evaluation
+
+# Runs the 60-question benchmark against the real model. Manual only, because it uses API quota.
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "SQL model to evaluate"
+        default: "openai/gpt-oss-120b"
+      min_accuracy:
+        description: "Fail below this accuracy (0-1)"
+        default: "0.7"
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    env:
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Run evaluation
+        run: python -m eval.run_eval --model "${{ inputs.model }}" --sleep 2 --min-accuracy ${{ inputs.min_accuracy }}
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results
+          path: eval/results/

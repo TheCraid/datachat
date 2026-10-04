@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+      - name: Lint
+        run: ruff check .
+      - name: Tests (model calls are scripted, no API key needed)
+        run: pytest
+      - name: Gold queries run
+        run: python -m eval.run_eval --check-gold
+
+  docker:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t datachat .
+      - name: Smoke test
+        run: |
+          docker run -d -p 7860:7860 --name dc datachat
+          for i in $(seq 1 30); do curl -sf http://localhost:7860/api/health && exit 0; sleep 2; done
+          docker logs dc; exit 1

@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DataChat – Ask your data anything</title>
+<meta name="description" content="Ask questions about your data in plain English. Get the chart, a short insight and the exact SQL behind it.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="/static/app.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 26 26'%3E%3Crect width='26' height='26' rx='6' fill='%23111827'/%3E%3Cg stroke='%2360A5FA' stroke-width='2.4' stroke-linecap='round'%3E%3Cline x1='6' y1='20' x2='6' y2='13'/%3E%3Cline x1='11' y1='20' x2='11' y2='7'/%3E%3Cline x1='16' y1='20' x2='16' y2='10'/%3E%3Cline x1='21' y1='20' x2='21' y2='15'/%3E%3C/g%3E%3C/svg%3E">
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-in">
+    <a class="brand" href="#/">
+      <svg width="26" height="26" viewBox="0 0 26 26" fill="none" stroke="#60A5FA" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><line x1="5" y1="21" x2="5" y2="13"/><line x1="11" y1="21" x2="11" y2="6"/><line x1="17" y1="21" x2="17" y2="10"/><line x1="23" y1="21" x2="23" y2="16"/></svg>
+      DataChat
+    </a>
+    <nav class="nav" aria-label="Main">
+      <a href="#/workspace" data-route="workspace">Workspace</a>
+      <a href="#/dashboard" data-route="dashboard">Dashboard</a>
+      <a href="#/benchmark" data-route="benchmark">Benchmark</a>
+      <a class="gh" href="https://github.com/TheCraid/datachat" target="_blank" rel="noopener">GitHub</a>
+    </nav>
+  </div>
+</header>
+<main id="view" tabindex="-1"></main>
+<div id="toast" class="toast" role="status" hidden></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

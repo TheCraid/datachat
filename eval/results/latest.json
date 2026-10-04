@@ -1,0 +1,28 @@
+{
+  "runs": [
+    {
+      "label": "openai/gpt-oss-120b",
+      "model": "openai/gpt-oss-120b",
+      "kind": "api",
+      "note": "",
+      "accuracy": 0.95,
+      "by_difficulty": {
+        "easy": 0.9524,
+        "medium": 1.0,
+        "hard": 0.8667
+      },
+      "by_dataset": {
+        "food": 0.95,
+        "hr": 0.95,
+        "store": 0.95
+      },
+      "self_fixed_rate": 0.0,
+      "no_result_rate": 0.0,
+      "latency_ms_p50": 1314.0,
+      "cost_per_1k_usd": 0.3263,
+      "n": 60
+    }
+  ],
+  "generated_at": "2026-10-04T06:42:02.298262+00:00",
+  "n_questions": 60
+}
