@@ -157,6 +157,8 @@ def create_app(settings: Settings | None = None, backend: ChatBackend | None = N
             app.state.store = Store(settings.database_url)
         if settings.example_memory and app.state.memory is None:
             start_memory(app)
+        if settings.prepare_downloads:  # build the Excel downloads now, so the first click is instant
+            threading.Thread(target=app.state.warm_sample_files, daemon=True).start()
         yield
 
     app = FastAPI(title="DataChat", version="1.0.0", lifespan=lifespan,
@@ -214,6 +216,36 @@ def create_app(settings: Settings | None = None, backend: ChatBackend | None = N
 
     sample_files: dict[str, bytes] = {}
 
+    def build_sample_xlsx(ds) -> bytes:
+        """One Excel file per sample dataset: a sheet per table, with column widths that fit the data."""
+        from openpyxl import Workbook
+
+        wb = Workbook(write_only=True)
+        for t in ds.tables:
+            cur = ds.conn.cursor()
+            cur.execute(f'SELECT * FROM "{t.name}"')
+            rows = cur.fetchall()
+            sheet = wb.create_sheet(title=t.name[:31])
+            for i, col in enumerate(t.columns):
+                longest = max([len(col.name)] + [len(str(r[i])) for r in rows[:300] if r[i] is not None])
+                letter = chr(ord("A") + i) if i < 26 else "A" + chr(ord("A") + i - 26)
+                sheet.column_dimensions[letter].width = min(max(longest + 3, 12), 45)
+            sheet.append([c.name for c in t.columns])
+            for row in rows:
+                sheet.append(list(row))
+        buf = io.BytesIO()
+        wb.save(buf)
+        return buf.getvalue()
+
+    def warm_sample_files() -> None:
+        for sid, ds in list(app.state.registry.samples.items()):
+            try:
+                sample_files.setdefault(sid, build_sample_xlsx(ds))
+            except Exception:  # a failed warm-up only means the file is built on the first download
+                log.exception("Could not prepare the download for %s", sid)
+
+    app.state.warm_sample_files = warm_sample_files
+
     @app.get("/api/datasets/{dataset_id}/download")
     def download_sample(dataset_id: str):
         """A sample dataset as one Excel file, one sheet per table, so people can read the data before asking."""
@@ -221,19 +253,7 @@ def create_app(settings: Settings | None = None, backend: ChatBackend | None = N
         if ds is None:
             raise HTTPException(404, "Only the sample datasets can be downloaded.")
         if dataset_id not in sample_files:
-            from openpyxl import Workbook
-
-            wb = Workbook(write_only=True)
-            for t in ds.tables:
-                sheet = wb.create_sheet(title=t.name[:31])
-                sheet.append([c.name for c in t.columns])
-                cur = ds.conn.cursor()
-                cur.execute(f'SELECT * FROM "{t.name}"')
-                for row in cur.fetchall():
-                    sheet.append(list(row))
-            buf = io.BytesIO()
-            wb.save(buf)
-            sample_files[dataset_id] = buf.getvalue()
+            sample_files[dataset_id] = build_sample_xlsx(ds)
         return Response(sample_files[dataset_id],
                         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         headers={"Content-Disposition": f'attachment; filename="datachat_{dataset_id}.xlsx"'})

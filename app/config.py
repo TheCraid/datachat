@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     max_fix_attempts: int = 2      # extra tries after a failed or rejected query
     history_turns: int = 3         # earlier questions given to the model for follow-ups
 
+    prepare_downloads: bool = True  # build the sample-dataset Excel files at startup
+
     # Vector example memory: retrieve similar solved questions (FAISS + local embeddings) as worked examples.
     example_memory: bool = True
     embedding_model: str = "BAAI/bge-small-en-v1.5"
