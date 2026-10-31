@@ -94,15 +94,15 @@
 
   // ------------------------------------------------------------------ start page
   async function renderStart() {
-    document.title = "DataChat – Ask your data anything";
+    document.title = "DataChat – Instant, accurate answers from your data";
     const samples = await api("/api/datasets");
     const subtitle = (d) => d.tables.map((t) => t.name).join(" · ");
     view.innerHTML = `
     <div class="wrap">
       <section class="hero">
         <p class="eyebrow">Text-to-SQL analyst</p>
-        <h1>Ask your data anything.<br>Get charts, not code.</h1>
-        <p>Upload a spreadsheet, ask a question in plain English, and get the answer as a chart, a short insight and the exact SQL that produced it.</p>
+        <h1>Ask questions about your data and get instant, accurate answers in seconds.</h1>
+        <p>Upload a spreadsheet or try a sample dataset. Every answer comes with a chart, a short insight and the exact SQL behind it.</p>
       </section>
       <section class="split">
         <div class="drop" id="drop">
@@ -115,18 +115,22 @@
         </div>
         <div class="samples">
           <div class="label">Or start with a sample dataset</div>
+          <div class="note">Download the Excel file to explore the data before you ask your questions.</div>
           ${samples.map((d) => `
-            <a class="sample" href="#/workspace?ds=${esc(d.id)}">
-              ${ICON[d.id] || ICON.file}
-              <div><div class="t">${esc(d.title)}</div><div class="s">${esc(subtitle(d))}</div></div>
-              <span class="go">Open</span>
-            </a>`).join("")}
+            <div class="sample">
+              <a class="pick" href="#/workspace?ds=${esc(d.id)}">
+                ${ICON[d.id] || ICON.file}
+                <div><div class="t">${esc(d.title)}</div><div class="s">${esc(subtitle(d))}</div></div>
+              </a>
+              <a class="dl" href="/api/datasets/${esc(d.id)}/download" download aria-label="Download ${esc(d.title)} as an Excel file">Download</a>
+              <a class="go" href="#/workspace?ds=${esc(d.id)}">Open</a>
+            </div>`).join("")}
         </div>
       </section>
       <section class="steps3">
-        <div class="step3"><span class="n">01 · ASK</span><span class="h">Plain English in</span><span class="d">Ask follow-ups like a conversation: “now only for Karnataka”.</span></div>
+        <div class="step3"><span class="n">01 · ASK</span><span class="h">Plain English in</span><span class="d">Ask follow-ups like a conversation: “Show monthly revenue”, then “Which month was the highest?”.</span></div>
         <div class="step3"><span class="n">02 · CHECK</span><span class="h">Safe, self-correcting SQL</span><span class="d">Read-only queries only. If a query fails, the agent reads the error and fixes it.</span></div>
-        <div class="step3"><span class="n">03 · SEE</span><span class="h">Chart, insight, SQL</span><span class="d">Every number in the insight is checked against the query result.</span></div>
+        <div class="step3"><span class="n">03 · GET</span><span class="h">Chart, insight, SQL</span><span class="d">Every number in the insight is checked against the query result.</span></div>
       </section>
       <footer class="foot"><span>Built with FastAPI, LangGraph and DuckDB. All sample data is synthetic.</span><a href="#/benchmark">How accurate is it? See the benchmark</a></footer>
     </div>`;
@@ -224,7 +228,7 @@
     return out;
   }
 
-  const FRIENDLY = { guardrail: "Checking the question", write_sql: "Writing SQL", check_sql: "Checking the SQL", run_sql: "Running the query",
+  const FRIENDLY = { guardrail: "Checking the question", retrieve_examples: "Finding similar solved questions", write_sql: "Writing SQL", check_sql: "Checking the SQL", run_sql: "Running the query",
     fix_sql: "Fixing the query", give_up: "Stopping", make_chart: "Choosing a chart", write_insight: "Writing the insight", cache: "Reusing an earlier answer" };
 
   async function ask(ds, th, question, thread) {

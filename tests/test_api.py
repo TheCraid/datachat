@@ -146,3 +146,33 @@ def test_missing_api_key_gives_a_clear_message(registry, settings):
         r = c.post("/api/ask", json={"dataset_id": "store", "question": "x", "session_id": SESSION,
                                      "conversation_id": CONV})
         assert "GROQ_API_KEY" in parse_sse(r.text)[0][1]["message"]
+
+
+@pytest.mark.parametrize("dataset, tables", [("store", {"orders", "customers", "products"}),
+                                             ("food", {"deliveries", "restaurants", "riders"}),
+                                             ("hr", {"employees", "departments", "salaries"})])
+def test_sample_download_is_an_excel_file_with_one_sheet_per_table(client, registry, dataset, tables):
+    import io
+
+    from openpyxl import load_workbook
+
+    r = client.get(f"/api/datasets/{dataset}/download")
+    assert r.status_code == 200 and "spreadsheetml" in r.headers["content-type"]
+    assert f"datachat_{dataset}.xlsx" in r.headers["content-disposition"]
+    wb = load_workbook(io.BytesIO(r.content), read_only=True)
+    assert set(wb.sheetnames) == tables
+    for table in registry.get(dataset).tables:
+        rows = list(wb[table.name].iter_rows(values_only=True))
+        assert rows[0] == tuple(c.name for c in table.columns)
+        assert len(rows) - 1 == table.row_count
+
+
+def test_downloaded_sample_can_be_uploaded_back(client):
+    data = client.get("/api/datasets/hr/download").content
+    r = client.post("/api/upload", files={"file": ("datachat_hr.xlsx", data)})
+    assert r.status_code == 200
+    assert {t["name"] for t in r.json()["tables"]} == {"employees", "departments", "salaries"}
+
+
+def test_only_samples_can_be_downloaded(client):
+    assert client.get("/api/datasets/nope/download").status_code == 404

@@ -1,9 +1,12 @@
 """The DataChat agent: a LangGraph state machine that turns a question into a checked, executed query.
 
-    guard -> write_sql -> check_sql -> run_sql -> make_chart -> write_insight
-                            ^   |          |
-                            |   v          v
-                            fix_sql  <-----+   (on a rejected or failed query, up to N times)
+    guard -> retrieve_examples -> write_sql -> check_sql -> run_sql -> make_chart -> write_insight
+                                                  ^   |          |
+                                                  |   v          v
+                                                  fix_sql  <-----+   (on a rejected or failed query, up to N times)
+
+retrieve_examples looks up similar, already-solved questions in a FAISS vector index (app/memory.py) and adds
+them to the prompt as worked examples (retrieval-augmented generation).
 
 Every node appends human-readable events, which the API streams to the browser as they happen.
 """
@@ -26,6 +29,7 @@ from app.datasets import Dataset, QueryError
 from app.guardrails import check_question
 from app.insight import fallback_insight, unsupported_numbers
 from app.llm import LLMClient, LLMError, Usage
+from app.memory import ExampleMemory
 from app.sqlguard import SQLRejected, check_sql
 
 
@@ -35,11 +39,13 @@ class Deps:
     dataset: Dataset
     settings: Settings
     usage: Usage
+    memory: ExampleMemory | None = None   # None: no retrieval (uploads, the evaluation, or memory switched off)
 
 
 class AgentState(TypedDict, total=False):
     question: str
     history: list[dict]          # [{"question": ..., "sql": ...}] from earlier turns
+    examples: list[dict]         # similar solved questions from the vector index: question, sql, score
     sql: str                     # the model's latest SQL
     display_sql: str
     runnable_sql: str
@@ -88,9 +94,34 @@ def guard(state: AgentState, config: RunnableConfig) -> dict:
     return {"attempts": 0, "events": [_event("guardrail", "pass", "A read-only question about the data")]}
 
 
+@_timed("retrieve_examples")
+def retrieve_examples(state: AgentState, config: RunnableConfig) -> dict:
+    d = _deps(config)
+    if d.memory is None:
+        return {}
+    try:
+        found = d.memory.search(d.dataset.id, state["question"], d.settings.memory_top_k)
+    except Exception as exc:  # retrieval is an optimisation: never fail the question because of it
+        return {"events": [_event("retrieve_examples", "info", f"Example search unavailable: {type(exc).__name__}")]}
+    examples = [{"question": e.question, "sql": e.sql, "score": e.score} for e in found]
+    if not examples:
+        return {"examples": [], "events": [_event("retrieve_examples", "info", "No similar solved questions yet")]}
+    n = len(examples)
+    detail = f"Found {n} similar solved question{'s' if n != 1 else ''} (best match {examples[0]['score']:.2f})"
+    return {"examples": examples, "events": [_event("retrieve_examples", "pass", detail,
+                                                    examples=[e["question"] for e in examples])]}
+
+
 def _sql_messages(state: AgentState, d: Deps) -> list[dict]:
     system = prompts.SQL_SYSTEM.replace("{schema}", d.dataset.schema_text())
     msgs = [{"role": "system", "content": system}, *prompts.SQL_FEW_SHOT]
+    examples = state.get("examples") or []
+    if examples:
+        lines = [prompts.EXAMPLES_INTRO]
+        for e in examples:
+            lines.append(f"Q: {e['question']}\nSQL: {e['sql']}")
+        msgs.append({"role": "user", "content": "\n\n".join(lines)})
+        msgs.append({"role": "assistant", "content": '{"answerable": true, "sql": "", "message": "Noted."}'})
     history = state.get("history") or []
     if history:
         lines = [prompts.HISTORY_INTRO]
@@ -224,7 +255,7 @@ def write_insight(state: AgentState, config: RunnableConfig) -> dict:
 # --------------------------------------------------------------------------- edges
 
 def after_guard(state: AgentState) -> str:
-    return END if state.get("status") == "blocked" else "write_sql"
+    return END if state.get("status") == "blocked" else "retrieve_examples"
 
 
 def after_write(state: AgentState) -> str:
@@ -256,6 +287,7 @@ def build_graph(with_insight: bool = True):
     """The full graph for the app; the evaluation uses with_insight=False to measure SQL alone."""
     g = StateGraph(AgentState)
     g.add_node("guard", guard)
+    g.add_node("retrieve_examples", retrieve_examples)
     g.add_node("write_sql", write_sql)
     g.add_node("check_sql", check)
     g.add_node("run_sql", run)
@@ -265,7 +297,8 @@ def build_graph(with_insight: bool = True):
     if with_insight:
         g.add_node("write_insight", write_insight)
     g.add_edge(START, "guard")
-    g.add_conditional_edges("guard", after_guard, ["write_sql", END])
+    g.add_conditional_edges("guard", after_guard, ["retrieve_examples", END])
+    g.add_edge("retrieve_examples", "write_sql")
     g.add_conditional_edges("write_sql", after_write, ["check_sql", END])
     g.add_conditional_edges("check_sql", after_check, ["run_sql", "fix_sql", "give_up"])
     g.add_conditional_edges("run_sql", after_run, ["make_chart", "fix_sql", "give_up"])

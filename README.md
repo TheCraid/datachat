@@ -25,6 +25,11 @@ insight and the exact query behind it. Upload a CSV or Excel file, or try one of
   If a number cannot be found (allowing for rounding), the model gets one retry; after that a plain,
   always-correct summary is shown instead.
 - **Streaming:** each step reaches the browser as it happens (server-sent events).
+- **Vector example memory (RAG for SQL):** every correctly answered question is saved with its SQL and an
+  embedding (BAAI/bge-small-en-v1.5, run locally with fastembed/ONNX) in a **FAISS** vector index. For a new
+  question, the agent retrieves the most similar solved questions on the same dataset (cosine similarity) and
+  gives them to the model as worked examples, so it learns each dataset's patterns from real usage. Shown live
+  as "Finding similar solved questions" in the **Steps** tab; switched off for uploads and for the evaluation.
 - **Follow-ups** ("now only for Karnataka") use the last three questions and their SQL as context.
 - **Dashboard:** pin any answer; pinned cards re-run their saved SQL when opened.
 - **Evaluation:** 60 hand-written questions with gold SQL, scored by execution accuracy (below).
@@ -37,7 +42,8 @@ insight and the exact query behind it. Upload a CSV or Excel file, or try one of
 flowchart LR
     Q[Question] --> G[Guardrail<br/>injection, write intent]
     G -->|blocked| X[Reply: blocked]
-    G --> W[Write SQL<br/>LLM + schema + history]
+    G --> V[Retrieve examples<br/>FAISS vector search]
+    V --> W[Write SQL<br/>LLM + schema + examples + history]
     W -->|not answerable| N[Reply: explain why]
     W --> C{SQL check<br/>sqlglot}
     C -->|rejected| F[Fix SQL<br/>LLM reads the error]
@@ -52,6 +58,7 @@ flowchart LR
 | Part | Choice | Why |
 |---|---|---|
 | Agent | LangGraph state machine | Retry loops and branches are explicit, testable edges, not hidden in a prompt |
+| Example memory | FAISS (inner product on normalised vectors) + fastembed `bge-small-en-v1.5` | Similar solved questions as few-shot examples; small CPU model, no extra API key; vectors persist in the history database and the index is rebuilt on startup |
 | SQL engine | DuckDB (in-memory, one database per dataset) | Fast analytics on CSV/Excel, no server, easy to lock down |
 | SQL safety | sqlglot parse + allow-list | Rejects writes, multiple statements, file functions and unknown tables before anything runs |
 | Models | Groq: `gpt-oss-120b` writes SQL, `gpt-oss-20b` writes insights and is the fallback | The big model only where accuracy matters; the cheaper one for short text |
@@ -92,7 +99,7 @@ cp .env.example .env                 # Windows: copy .env.example .env   — the
 uvicorn app.api:app --reload --port 7860
 ```
 
-Open http://localhost:7860. Run the tests with `pytest` (151 tests; the model is scripted, so no key or
+Open http://localhost:7860. Run the tests with `pytest` (159 tests; the model is scripted, so no key or
 network is needed) and the linter with `ruff check .`.
 
 ## Deploy on Render (free)
@@ -102,8 +109,9 @@ network is needed) and the linter with `ruff check .`.
    Neon database) so history and pins survive restarts.
 3. Health check path: `/api/health`. Deploy.
 
-The free instance has 512 MB of memory; DataChat uses about 220 MB with all three sample datasets loaded,
-because no model runs on the server.
+The free instance has 512 MB of memory. DataChat uses about 220 MB with all three sample datasets loaded; the
+small embedding model for the example memory adds roughly 150 MB. Set `EXAMPLE_MEMORY=false` to switch the
+memory off. Without a `DATABASE_URL`, saved examples are lost when the free instance restarts.
 
 ## API
 

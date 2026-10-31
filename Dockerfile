@@ -7,6 +7,10 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Download the embedding model for the vector example memory at build time, so the app never fetches it at runtime.
+ENV EMBEDDING_CACHE_DIR=/app/models
+RUN python -c "from fastembed import TextEmbedding; TextEmbedding('BAAI/bge-small-en-v1.5', cache_dir='/app/models')"
+
 COPY . .
 RUN chown -R app:app /app
 USER app

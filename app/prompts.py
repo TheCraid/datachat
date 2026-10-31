@@ -35,6 +35,9 @@ SQL_FEW_SHOT = [
                                      '"message": "Summed revenue per month for the North region in the latest year."}'},
 ]
 
+EXAMPLES_INTRO = ("Similar questions that were already answered correctly on this dataset. Use them as patterns "
+                  "for tables, joins and filters, but write a query for the NEW question:")
+
 HISTORY_INTRO = "Earlier questions in this conversation (use them to resolve follow-ups like 'now only for X'):"
 
 FIX_USER = """Your previous query failed.

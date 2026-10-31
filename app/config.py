@@ -29,6 +29,13 @@ class Settings(BaseSettings):
     max_fix_attempts: int = 2      # extra tries after a failed or rejected query
     history_turns: int = 3         # earlier questions given to the model for follow-ups
 
+    # Vector example memory: retrieve similar solved questions (FAISS + local embeddings) as worked examples.
+    example_memory: bool = True
+    embedding_model: str = "BAAI/bge-small-en-v1.5"
+    embedding_cache_dir: str = ""      # where the ONNX model is cached; the Docker image pre-downloads it
+    memory_top_k: int = 3              # examples given to the model per question
+    memory_min_score: float = 0.6      # cosine similarity needed to count as "similar"
+
     # Query execution
     max_result_rows: int = 1000
     query_timeout_s: float = 10.0

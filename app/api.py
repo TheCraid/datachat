@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import logging
 import re
@@ -13,7 +14,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -23,6 +24,7 @@ from app.charts import choose_chart
 from app.config import Settings, get_settings
 from app.datasets import DatasetError, DatasetRegistry, QueryError, load_upload
 from app.llm import ChatBackend, LLMClient, LLMError, OpenAICompatibleBackend, Usage
+from app.memory import Embedder, ExampleMemory, FastEmbedEmbedder
 from app.sqlguard import SQLRejected, check_sql
 from app.store import Store
 
@@ -123,8 +125,25 @@ def sse(event: str, data: dict) -> str:
 
 
 def create_app(settings: Settings | None = None, backend: ChatBackend | None = None,
-               registry: DatasetRegistry | None = None, store: Store | None = None) -> FastAPI:
+               registry: DatasetRegistry | None = None, store: Store | None = None,
+               embedder: Embedder | None = None) -> FastAPI:
     settings = settings or get_settings()
+
+    def start_memory(app: FastAPI) -> None:
+        """Build the vector example memory. The embedding model loads in the background so startup stays fast;
+        until it is ready (or if it fails to load) questions are answered without retrieval."""
+        def build():
+            try:
+                emb = embedder or FastEmbedEmbedder(settings.embedding_model, settings.embedding_cache_dir)
+                app.state.memory = ExampleMemory(app.state.store, emb, settings.memory_top_k,
+                                                 settings.memory_min_score)
+                log.info("Example memory ready (%d solved examples)", app.state.memory.size())
+            except Exception:
+                log.exception("Example memory disabled: could not load the embedding model")
+        if embedder is not None:
+            build()
+        else:
+            threading.Thread(target=build, name="example-memory", daemon=True).start()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -136,12 +155,15 @@ def create_app(settings: Settings | None = None, backend: ChatBackend | None = N
             app.state.registry = reg
         if app.state.store is None:
             app.state.store = Store(settings.database_url)
+        if settings.example_memory and app.state.memory is None:
+            start_memory(app)
         yield
 
     app = FastAPI(title="DataChat", version="1.0.0", lifespan=lifespan,
                   description="Ask questions about your data in plain English; get SQL, a chart and an insight.")
     app.state.registry = registry
     app.state.store = store
+    app.state.memory = None
     app.state.stats = Stats()
     app.state.cache = AnswerCache()
     limiter = RateLimiter(settings.rate_limit_per_min)
@@ -173,8 +195,10 @@ def create_app(settings: Settings | None = None, backend: ChatBackend | None = N
     # ------------------------------------------------------------------ data
     @app.get("/api/health")
     def health():
+        mem = app.state.memory
         return {"status": "ok", "llm_configured": llm is not None,
-                "samples": sorted(app.state.registry.samples) if app.state.registry else []}
+                "samples": sorted(app.state.registry.samples) if app.state.registry else [],
+                "example_memory": {"ready": mem is not None, "examples": mem.size() if mem else 0}}
 
     @app.get("/api/datasets")
     def datasets():
@@ -187,6 +211,32 @@ def create_app(settings: Settings | None = None, backend: ChatBackend | None = N
     @app.get("/api/datasets/{dataset_id}")
     def dataset(dataset_id: str):
         return get_dataset(dataset_id).summary()
+
+    sample_files: dict[str, bytes] = {}
+
+    @app.get("/api/datasets/{dataset_id}/download")
+    def download_sample(dataset_id: str):
+        """A sample dataset as one Excel file, one sheet per table, so people can read the data before asking."""
+        ds = app.state.registry.samples.get(dataset_id)
+        if ds is None:
+            raise HTTPException(404, "Only the sample datasets can be downloaded.")
+        if dataset_id not in sample_files:
+            from openpyxl import Workbook
+
+            wb = Workbook(write_only=True)
+            for t in ds.tables:
+                sheet = wb.create_sheet(title=t.name[:31])
+                sheet.append([c.name for c in t.columns])
+                cur = ds.conn.cursor()
+                cur.execute(f'SELECT * FROM "{t.name}"')
+                for row in cur.fetchall():
+                    sheet.append(list(row))
+            buf = io.BytesIO()
+            wb.save(buf)
+            sample_files[dataset_id] = buf.getvalue()
+        return Response(sample_files[dataset_id],
+                        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        headers={"Content-Disposition": f'attachment; filename="datachat_{dataset_id}.xlsx"'})
 
     @app.post("/api/upload")
     async def upload(request: Request, file: UploadFile = File(...)):
@@ -223,6 +273,9 @@ def create_app(settings: Settings | None = None, backend: ChatBackend | None = N
             final: dict = {"status": "error", "message": "", "sql": None, "attempts": 0}
             usage = Usage()
             emitted: list[tuple[str, dict]] = []
+            result_rows = 0
+            # Retrieval only on the shared sample datasets; uploads are private and short-lived.
+            memory: ExampleMemory | None = app.state.memory if ds.id in app.state.registry.samples else None
             try:
                 if cached:
                     yield sse("step", {"step": "cache", "status": "pass", "detail": "Same question on the same data: "
@@ -233,13 +286,14 @@ def create_app(settings: Settings | None = None, backend: ChatBackend | None = N
                         else:
                             yield sse(ev, data)
                 else:
-                    deps = Deps(llm=llm, dataset=ds, settings=settings, usage=usage)
+                    deps = Deps(llm=llm, dataset=ds, settings=settings, usage=usage, memory=memory)
                     for _node, upd in stream_answer(question, history, deps):
                         out: list[tuple[str, dict]] = [("step", e) for e in upd.get("events", [])]
                         if upd.get("display_sql"):
                             final["sql"] = upd["display_sql"]
                             out.append(("sql", {"sql": upd["display_sql"]}))
                         if "result" in upd:
+                            result_rows = len(upd["result"]["rows"])
                             out.append(("result", upd["result"]))
                         if "chart" in upd:
                             out.append(("chart", upd["chart"]))
@@ -270,6 +324,11 @@ def create_app(settings: Settings | None = None, backend: ChatBackend | None = N
                                   latency_ms=latency, cost_usd=usage.cost_usd)
             except Exception:
                 log.exception("could not save history")
+            if memory is not None and final["status"] == "answered" and not cached and final["sql"] and result_rows:
+                try:  # remember the solved question so similar ones get it as a worked example
+                    memory.add(ds.id, question, final["sql"])
+                except Exception:
+                    log.exception("could not save the example")
             app.state.stats.record({"latency_ms": latency, "status": final["status"], "cost_usd": usage.cost_usd,
                                     "attempts": final.get("attempts", 0), "cached": bool(cached)})
 

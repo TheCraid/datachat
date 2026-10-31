@@ -1,4 +1,4 @@
-"""Question history and pinned charts. SQLite locally, PostgreSQL in production (DATABASE_URL)."""
+"""Question history, pinned charts and solved examples. SQLite locally, PostgreSQL in production (DATABASE_URL)."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     Integer,
+    LargeBinary,
     MetaData,
     String,
     Table,
@@ -43,6 +44,17 @@ pins = Table(
     Column("dataset_title", String(120), nullable=False),
     Column("question", Text, nullable=False),
     Column("sql", Text, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+)
+
+# Correctly answered questions with an embedding of the question, for the vector example memory (app/memory.py).
+examples = Table(
+    "examples", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("dataset_id", String(64), index=True, nullable=False),
+    Column("question", Text, nullable=False),
+    Column("sql", Text, nullable=False),
+    Column("embedding", LargeBinary, nullable=False),
     Column("created_at", DateTime(timezone=True), nullable=False),
 )
 
@@ -96,3 +108,14 @@ class Store:
         with self.engine.begin() as c:
             res = c.execute(delete(pins).where(pins.c.id == pin_id, pins.c.session_id == session_id))
             return res.rowcount > 0
+
+    def add_example(self, *, dataset_id: str, question: str, sql: str, embedding: bytes) -> None:
+        with self.engine.begin() as c:
+            c.execute(insert(examples).values(dataset_id=dataset_id, question=question, sql=sql,
+                                              embedding=embedding, created_at=datetime.now(UTC)))
+
+    def all_examples(self) -> list[dict]:
+        q = select(examples.c.dataset_id, examples.c.question, examples.c.sql, examples.c.embedding
+                   ).order_by(examples.c.id)
+        with self.engine.connect() as c:
+            return [dict(r._mapping) for r in c.execute(q).all()]
